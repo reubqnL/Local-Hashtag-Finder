@@ -18,6 +18,7 @@ def get_frames(video, tmp):
                 "-ss", str(t),
                 "-i", str(video),
                 "-frames:v", "1",
+                "-update", "1",
                 "-vf", "scale=640:-1",
                 out
             ],
@@ -28,7 +29,6 @@ def get_frames(video, tmp):
             imgs.append(out)
 
     return imgs
-
 
 def ask_ai(frames):
     print("Running Ollama...")
@@ -44,7 +44,10 @@ def ask_ai(frames):
                 "content": txt,
                 "images": frames
             }
-        ]
+        ],
+        options={
+            "num_ctx": 8192
+        }
     )
 
     return res["message"]["content"]
@@ -69,6 +72,9 @@ if __name__ == "__main__":
 
     with tempfile.TemporaryDirectory() as td:
         frames = get_frames(f, td)
+
+        # print(f"test, extracted {len(frames)} frames. paths: {frames}")
+
 
         if not frames:
             print("No frames extracted.")
