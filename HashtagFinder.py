@@ -31,27 +31,68 @@ def get_frames(video, tmp):
     return imgs
 
 def ask_ai(frames):
-    print("Running Ollama...")
-
-    txt = (
-        "Look at these frames and tell me what's happening in the video (subject, setting, actions). Be specific.")
+    print("analysing video...")
 
     res = ollama.chat(
         model="qwen2.5vl:3b",
         messages=[
             {
                 "role": "user",
-                "content": txt,
+                "content": "Describe what's happening in these frames. Include the main subject, setting and actions.",
                 "images": frames
             }
         ],
-        options={
-            "num_ctx": 8192
-        }
+        options={"num_ctx": 8192}
     )
 
     return res["message"]["content"]
 
+def get_hashtags(description):
+    print("getting tags...")
+
+    txt = f"""
+Based on this video description, generate 10 relevant hashtags for each platform:
+TikTok, Instagram and YouTube Shorts.
+
+Use a mix of broad and specific tags. Keep them relevant and don't claim they're trending.
+
+Video:
+{description}
+
+Format:
+
+TIKTOK:
+#tag #tag
+
+INSTAGRAM:
+#tag #tag
+
+YOUTUBE SHORTS:
+#tag #tag
+"""
+
+    res = ollama.chat(
+        model="qwen2.5vl:3b",
+        messages=[
+            {
+                "role": "user",
+                "content": txt
+            }
+        ],
+        options={"num_ctx": 8192}
+    )
+
+    return res["message"]["content"]
+
+def save_results(video, description, hashtags):
+    out = video.with_name(f"{video.stem}_hashtags.txt")
+
+    with open(out, "w", encoding="utf-8") as file:
+        file.write(f"VIDEO: {video.name}\n\n")
+        file.write(f"VIDEO ANALYSIS:\n{description}\n\n")
+        file.write(f"GENERATED HASHTAGS:\n{hashtags}\n")
+
+    print(f"saved to {out}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -68,16 +109,17 @@ if __name__ == "__main__":
         print("Invalid video format.")
         sys.exit(1)
 
-    print(f"Working on {f.name}...")
-
     with tempfile.TemporaryDirectory() as td:
         frames = get_frames(f, td)
-
-        # print(f"test, extracted {len(frames)} frames. paths: {frames}")
-
 
         if not frames:
             print("No frames extracted.")
             sys.exit(1)
 
-        print(ask_ai(frames))
+        description = ask_ai(frames)
+        print("\n", description)
+
+        hashtags = get_hashtags(description)
+        print("\n", hashtags)
+
+        save_results(f, description, hashtags)
