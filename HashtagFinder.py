@@ -1,67 +1,77 @@
-import sys
+import sys, subprocess, tempfile
 from pathlib import Path
-import subprocess
-import tempfile
+import ollama
 
-SUPPORTED_FORMATS = {".mp4", ".mov", ".webm", ".mkv"}
-TIMESTAMPS = [5, 15, 30, 50]
+EXTS = ['.mp4', '.mov', '.webm', '.mkv']
+TIMES = [5, 15, 30, 50]
 
 
-def extract_frames(video_path, temp_dir_path):
-    frames = []
+def get_frames(video, tmp):
+    imgs = []
 
-    for ts in TIMESTAMPS:
-        output = temp_dir_path / f"frame_{ts}.jpg"
+    for t in TIMES:
+        out = f"{tmp}/f_{t}.jpg"
 
         subprocess.run(
             [
                 "ffmpeg", "-y",
-                "-ss", str(ts),
-                "-i", str(video_path),
+                "-ss", str(t),
+                "-i", str(video),
                 "-frames:v", "1",
                 "-vf", "scale=640:-1",
-                str(output)
+                out
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stdout=subprocess.DEVNULL
         )
 
-        if output.is_file():
-            frames.append(output)
+        if Path(out).exists():
+            imgs.append(out)
 
-    return frames
+    return imgs
 
 
-def main():
-    if len(sys.argv) < 2:
-        script_name = Path(__file__).name
-        print(f"Usage: python3 {script_name} <video_path>", file=sys.stderr)
-        sys.exit(1)
+def ask_ai(frames):
+    print("Running Ollama...")
 
-    video_path = Path(sys.argv[1])
+    txt = (
+        "Look at these frames and tell me what's happening in the video (subject, setting, actions). Be specific.")
 
-    if not video_path.is_file():
-        print(f"Error: File not found - {video_path}", file=sys.stderr)
-        sys.exit(1)
+    res = ollama.chat(
+        model="qwen2.5vl:3b",
+        messages=[
+            {
+                "role": "user",
+                "content": txt,
+                "images": frames
+            }
+        ]
+    )
 
-    if video_path.suffix.lower() not in SUPPORTED_FORMATS:
-        print(f"Error: Unsupported format {video_path.suffix}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Processing: {video_path.name}")
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        frames = extract_frames(video_path, temp_dir_path)
-
-        if not frames:
-            print("Error: Failed to extract any frames.", file=sys.stderr)
-            sys.exit(1)
-
-        print(f"Extracted {len(frames)} frames:")
-        for frame in frames:
-            print(f"  - {frame.name}")
+    return res["message"]["content"]
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 2:
+        print("Need a video file path.")
+        sys.exit(1)
+
+    f = Path(sys.argv[1])
+
+    if not f.is_file():
+        print("Video file not found.")
+        sys.exit(1)
+
+    if f.suffix.lower() not in EXTS:
+        print("Invalid video format.")
+        sys.exit(1)
+
+    print(f"Working on {f.name}...")
+
+    with tempfile.TemporaryDirectory() as td:
+        frames = get_frames(f, td)
+
+        if not frames:
+            print("No frames extracted.")
+            sys.exit(1)
+
+        print(ask_ai(frames))
