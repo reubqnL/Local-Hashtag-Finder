@@ -1,150 +1,28 @@
-
-import sys, subprocess, tempfile, re
+import sys, subprocess, tempfile, json
+from difflib import SequenceMatcher
 from pathlib import Path
 import ollama
 from faster_whisper import WhisperModel
 
 EXTS = ['.mp4', '.mov', '.webm', '.mkv']
 FRAME_POINTS = [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95]
-
-TAG_RULES = [
-    {
-        "tag": "#HorowitzAcademy",
-        "signals": ["horowitz academy"],
-        "weights": {"TIKTOK": 5, "INSTAGRAM": 4, "YOUTUBE SHORTS": 5}
-    },
-    {
-        "tag": "#SheffieldCollege",
-        "signals": ["sheffield college"],
-        "weights": {"TIKTOK": 4, "INSTAGRAM": 3, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#bravand",
-        "signals": ["bravand"],
-        "weights": {"TIKTOK": 2, "INSTAGRAM": 4, "YOUTUBE SHORTS": 2}
-    },
-    {
-        "tag": "#SoftwareDevelopmentStudent",
-        "signals": ["studying software development", "software development at the sheffield college"],
-        "weights": {"TIKTOK": 5, "INSTAGRAM": 3, "YOUTUBE SHORTS": 3}
-    },
-    {
-        "tag": "#SoftwareDevelopment",
-        "signals": ["software development", "passion for software development"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 3, "YOUTUBE SHORTS": 5}
-    },
-    {
-        "tag": "#WebsiteDeveloper",
-        "signals": ["website developer"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 4, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#WebDevelopment",
-        "signals": ["website developer", "build three websites", "building websites"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 4, "YOUTUBE SHORTS": 5}
-    },
-    {
-        "tag": "#WebDesign",
-        "signals": ["design and build three websites", "helped design", "website design"],
-        "weights": {"TIKTOK": 2, "INSTAGRAM": 5, "YOUTUBE SHORTS": 3}
-    },
-    {
-        "tag": "#WebsiteProjects",
-        "signals": ["three websites", "build projects", "projects that i've worked on"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 5, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#InternshipExperience",
-        "signals": ["internship", "200 hour internship", "200 hours"],
-        "weights": {"TIKTOK": 5, "INSTAGRAM": 4, "YOUTUBE SHORTS": 5}
-    },
-    {
-        "tag": "#WorkExperience",
-        "signals": ["worked with a company", "internship", "industry experience"],
-        "weights": {"TIKTOK": 4, "INSTAGRAM": 3, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#DeveloperPortfolio",
-        "signals": ["portfolio website", "my portfolio"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 5, "YOUTUBE SHORTS": 5}
-    },
-    {
-        "tag": "#PortfolioProjects",
-        "signals": ["projects that i've worked on", "portfolio website"],
-        "weights": {"TIKTOK": 2, "INSTAGRAM": 5, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#SmallBusinessWebsite",
-        "signals": ["shop on the website", "crochet", "sister's shop"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 5, "YOUTUBE SHORTS": 4},
-        "requires": ["shop", "crochet"]
-    },
-    {
-        "tag": "#WebsiteForBusiness",
-        "signals": ["building a little shop", "shop on the website", "small business"],
-        "weights": {"TIKTOK": 2, "INSTAGRAM": 5, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#Teamwork",
-        "signals": ["work within a team", "team leader", "working under a manager"],
-        "weights": {"TIKTOK": 4, "INSTAGRAM": 2, "YOUTUBE SHORTS": 2}
-    },
-    {
-        "tag": "#CareerDevelopment",
-        "signals": ["career", "where i want to go in life", "opportunity to meet new people in the industry"],
-        "weights": {"TIKTOK": 5, "INSTAGRAM": 3, "YOUTUBE SHORTS": 3}
-    },
-    {
-        "tag": "#TechCareer",
-        "signals": ["software development", "industry", "career"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 2, "YOUTUBE SHORTS": 4}
-    },
-    {
-        "tag": "#TravelOpportunities",
-        "signals": ["travel to new places", "travel"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 3, "YOUTUBE SHORTS": 1}
-    },
-    {
-        "tag": "#PersonalGrowth",
-        "signals": ["figure out where i want to go in life", "new experiences"],
-        "weights": {"TIKTOK": 3, "INSTAGRAM": 3, "YOUTUBE SHORTS": 1}
-    }
-]
-
 PLATFORMS = ["TIKTOK", "INSTAGRAM", "YOUTUBE SHORTS"]
+CATEGORIES = ["main", "niche", "community", "professional", "context"]
 
-PLATFORM_TAG_ORDER = {
-    "TIKTOK": [
-        "#SoftwareDevelopmentStudent",
-        "#InternshipExperience",
-        "#CareerDevelopment",
-        "#Teamwork",
-        "#WorkExperience",
-        "#TravelOpportunities",
-        "#WebsiteDeveloper",
-        "#HorowitzAcademy"
-    ],
-    "INSTAGRAM": [
-        "#DeveloperPortfolio",
-        "#WebDesign",
-        "#WebsiteProjects",
-        "#SmallBusinessWebsite",
-        "#WebsiteForBusiness",
-        "#bravand",
-        "#SheffieldCollege",
-        "#HorowitzAcademy"
-    ],
-    "YOUTUBE SHORTS": [
-        "#WebDevelopment",
-        "#SoftwareDevelopment",
-        "#InternshipExperience",
-        "#WebsiteProjects",
-        "#DeveloperPortfolio",
-        "#WebsiteDeveloper",
-        "#SoftwareDevelopmentStudent",
-        "#HorowitzAcademy"
-    ]
+PLATFORM_CATEGORY_BONUS = {
+    "TIKTOK": {"main": 0.4, "niche": 1.0, "community": 0.8, "professional": 0.1, "context": 0.3},
+    "INSTAGRAM": {"main": 0.6, "niche": 0.6, "community": 0.8, "professional": 0.6, "context": 0.3},
+    "YOUTUBE SHORTS": {"main": 1.0, "niche": 0.4, "community": 0.3, "professional": 0.2, "context": 0.6}
 }
+
+GENERIC_TAGS = {
+    "#fyp", "#foryou", "#foryoupage", "#viral", "#viralvideo",
+    "#trending", "#trendingnow", "#explore", "#explorepage",
+    "#reels", "#shortsfeed", "#subscribe", "#follow",
+    "#followme", "#likeforlikes"
+}
+
+MAX_TAGS = 8
 
 def get_duration(video):
     res = subprocess.run(
@@ -217,13 +95,9 @@ def transcribe_audio(audio):
 
     model = WhisperModel("base", device="cpu", compute_type="int8")
     segments, info = model.transcribe(audio, beam_size=5)
-
     transcript = " ".join(segment.text.strip() for segment in segments)
 
-    if not transcript:
-        return "No speech detected."
-
-    return transcript
+    return transcript if transcript else "No speech detected."
 
 def ask_ai(frames, transcript, title):
     print("analysing video...")
@@ -242,24 +116,20 @@ VIDEO TITLE:
 AUDIO TRANSCRIPT:
 {transcript}
 
-Your job is to understand what the video is actually about.
-
-Identify:
+Explain:
 - The main subject and topic.
-- What the person is discussing or explaining.
+- What the person is discussing.
 - The purpose of the video.
-- Important people, organisations, places or subjects mentioned.
-- Any activities, events or demonstrations shown.
-- Relevant context that helps someone understand the video.
+- Important people, organisations or places.
+- Relevant activities or events shown.
 
-Use the transcript as your main source of information about the topic.
-Use the frames to understand the visual content and setting.
+Use the transcript as the main source of information.
+Use the frames to understand the visual content.
 
-Do not assume the topic based on the filename alone.
-Do not invent information that is not supported by the frames or transcript.
-If something is unclear, say that it is unclear.
+Do not invent information or assume the topic from the filename.
+If something is unclear, say so.
 
-Write a detailed but concise explanation of the video's content.
+Keep the explanation detailed but concise.
 """,
                 "images": frames
             }
@@ -269,44 +139,191 @@ Write a detailed but concise explanation of the video's content.
 
     return res["message"]["content"]
 
-def score_hashtags(content, platform):
-    available = {}
+def generate_hashtag_candidates(description, title, transcript):
+    print("generating hashtag candidates...")
 
-    for rule in TAG_RULES:
-        if "requires" in rule:
-            if not all(term in content for term in rule["requires"]):
-                continue
+    hashtag_schema = {
+        "type": "object",
+        "properties": {
+            "hashtags": {
+                "type": "array",
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tag": {"type": "string"},
+                        "category": {"type": "string", "enum": CATEGORIES},
+                        "relevance": {"type": "number"},
+                        "specificity": {"type": "number"},
+                        "platform_scores": {
+                            "type": "object",
+                            "properties": {
+                                "TIKTOK": {"type": "number"},
+                                "INSTAGRAM": {"type": "number"},
+                                "YOUTUBE SHORTS": {"type": "number"}
+                            },
+                            "required": PLATFORMS
+                        }
+                    },
+                    "required": [
+                        "tag", "category", "relevance",
+                        "specificity", "platform_scores"
+                    ]
+                }
+            }
+        },
+        "required": ["hashtags"]
+    }
 
-        if not any(signal in content for signal in rule["signals"]):
+    res = ollama.chat(
+        model="qwen2.5vl:3b",
+        messages=[
+            {
+                "role": "user",
+                "content": f"""
+Generate up to 12 useful hashtags for this video.
+
+TITLE:
+{title}
+
+VIDEO ANALYSIS:
+{description}
+
+TRANSCRIPT:
+{transcript}
+
+Use a mix of these categories where relevant:
+- main: the core subject
+- niche: specific topics within the subject
+- community: related audiences or communities
+- professional: careers, skills and industries
+- context: places, tools, events or formats
+
+Only suggest tags that genuinely relate to the video.
+Do not invent people, organisations or events.
+Avoid repeating the same idea with slightly different wording.
+Avoid generic tags such as #fyp, #viral and #trending.
+
+For every tag, provide:
+- relevance: 1-10
+- specificity: 1-10
+- platform_scores: separate 1-10 estimates for TikTok, Instagram and YouTube Shorts.
+
+TikTok: consider niche communities and short-form discovery.
+Instagram: consider searchable topics and interest communities.
+YouTube Shorts: prioritise clear descriptive keywords.
+
+Give each platform its own scores. These are estimates, not real popularity data.
+Return the hashtags in the requested JSON format.
+""",
+            }
+        ],
+        format=hashtag_schema,
+        options={"num_ctx": 8192, "num_predict": 1800, "temperature": 0.2}
+    )
+
+    data = json.loads(res["message"]["content"])
+    candidates = []
+    seen = set()
+
+    for item in data.get("hashtags", []):
+        tag = item.get("tag", "").strip()
+
+        if not tag.startswith("#") or not tag[1:].replace("_", "").isalnum():
             continue
 
-        available[rule["tag"]] = True
+        if not tag[1:].isascii():
+            continue
+
+        if tag.lower() in seen or tag.lower() in GENERIC_TAGS:
+            continue
+
+        category = item["category"]
+
+        relevance = max(0, min(10, float(item["relevance"])))
+        specificity = max(0, min(10, float(item["specificity"])))
+
+        scores = {
+            platform: max(0, min(10, float(item["platform_scores"][platform])))
+            for platform in PLATFORMS
+        }
+
+        if relevance == 0:
+            continue
+
+        candidates.append({
+            "tag": tag,
+            "category": category,
+            "relevance": relevance,
+            "specificity": specificity,
+            "platform_scores": scores
+        })
+
+        seen.add(tag.lower())
+
+    print(f"generated {len(candidates)} hashtag candidates")
+
+    return candidates
+
+def tags_overlap(tag, other):
+    a = tag.lstrip("#").lower()
+    b = other.lstrip("#").lower()
+
+    if a in b or b in a:
+        return True
+
+    return SequenceMatcher(None, a, b).ratio() >= 0.75
+
+def score_hashtags(candidates, platform):
+    scored = []
+
+    for item in candidates:
+        relevance = item["relevance"]
+        platform_score = item["platform_scores"][platform]
+        specificity = item["specificity"]
+        category = item["category"]
+
+        score = relevance * 0.5 + platform_score * 0.35 + specificity * 0.15
+        score += PLATFORM_CATEGORY_BONUS[platform].get(category, 0.3)
+
+        scored.append({
+            "tag": item["tag"],
+            "score": score
+        })
+
+    scored.sort(key=lambda item: item["score"], reverse=True)
 
     selected = []
 
-    for tag in PLATFORM_TAG_ORDER[platform]:
-        if tag in available:
-            selected.append(tag)
+    for item in scored:
+        if any(tags_overlap(item["tag"], tag) for tag in selected):
+            continue
 
-        if len(selected) == 8:
+        selected.append(item["tag"])
+
+        if len(selected) == MAX_TAGS:
             break
 
     return selected
 
 def get_hashtags(description, title, transcript):
-    print("generating platform-specific hashtags...")
+    candidates = generate_hashtag_candidates(description, title, transcript)
 
-    content = f"{title} {description} {transcript}".lower()
+    if not candidates:
+        return "\n\n".join(
+            f"{platform}:\nNo relevant hashtags identified."
+            for platform in PLATFORMS
+        )
+
     results = []
 
     for platform in PLATFORMS:
-        tags = score_hashtags(content, platform)
+        tags = score_hashtags(candidates, platform)
 
         if not tags:
             tags = ["No relevant hashtags identified."]
 
-        print(f"generated {len(tags)} hashtags for {platform}")
-
+        print(f"{platform}: generated {len(tags)} hashtags")
         results.append(f"{platform}:\n{' '.join(tags)}")
 
     return "\n\n".join(results)
@@ -318,6 +335,10 @@ def save_results(video, description, transcript, hashtags):
         file.write(f"VIDEO: {video.name}\n\n")
         file.write(f"VIDEO TRANSCRIPT:\n{transcript}\n\n")
         file.write(f"VIDEO ANALYSIS:\n{description}\n\n")
+        file.write(
+            "Scores are AI estimates of relevance and platform suitability, "
+            "not real hashtag popularity, search volume or trends.\n\n"
+        )
         file.write(f"GENERATED HASHTAGS:\n{hashtags}\n")
 
     print(f"saved to {out}")
